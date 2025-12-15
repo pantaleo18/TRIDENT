@@ -202,7 +202,6 @@ class ABMILSlideEncoder(BaseSlideEncoder):
         return image_features
 
 
-
 class PRISMSlideEncoder(BaseSlideEncoder):
 
     def __init__(self, **build_kwargs):
