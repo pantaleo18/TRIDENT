@@ -35,7 +35,6 @@ class ABMIL(nn.Module):
                                                                    nn.Sigmoid(),
                                                                    nn.Dropout(dropout)) for _ in range(n_heads)])
         
-        # Initialize branching layers
         self.branching_layers = nn.ModuleList([nn.Linear(head_dim, n_branches) for _ in range(n_heads)])
 
         # Initialize condensing layer if multiple heads are used
@@ -53,7 +52,6 @@ class ABMIL(nn.Module):
         Returns:
             aggregated_features (torch.Tensor): Attention-weighted features aggregated across heads. Shape: batch_size x n_branches x feature_dim
         """
-
         assert features.dim() == 3, f'Input features must be 3-dimensional (batch_size x num_images x feature_dim). Got {features.shape} instead.'
         if attn_mask is not None:
             assert attn_mask.dim() == 2, f'Attention mask must be 2-dimensional (batch_size x num_images). Got {attn_mask.shape} instead.'
