@@ -184,29 +184,18 @@ class ABMILSlideEncoder(BaseSlideEncoder):
         mask = batch.get('mask', None)
         if mask is not None:
             mask = mask.to(device)
-            print(f"[ABMILSlideEncoder] mask shape: {mask.shape}, non-padded ratio: {mask.float().mean().item():.3f}")
         
         # Pre-attention layers
         image_features = self.model['pre_attention_layers'](features)
-        print(f"[ABMILSlideEncoder] After pre_attention_layers: {image_features.shape}, range=({image_features.min().item():.3f}, {image_features.max().item():.3f})")
         
         # ABMIL pooling with attention mask
         image_features, attn = self.model['image_pooler'](image_features, attn_mask=mask)
-        print(f"[ABMILSlideEncoder] ABMIL output features: {image_features.shape}, attention shape: {attn.shape}")
-        
-        # Check attention on padded positions
-        if mask is not None:
-            mask_expanded = mask[:, None, None, :]  # shape: [batch_size, 1, 1, num_images]
-            padded_attn = attn.masked_select(~mask_expanded)
-            print(f"[ABMILSlideEncoder] Attention on padded positions (should be 0): min={padded_attn.min().item():.3f}, max={padded_attn.max().item():.3f}")
         
         # Remove branch dimension
         image_features = rearrange(image_features, 'b 1 f -> b f')
-        print(f"[ABMILSlideEncoder] Features after removing branch dim: {image_features.shape}")
         
         # Post-attention layers
         image_features = self.model['post_attention_layers'](image_features)
-        print(f"[ABMILSlideEncoder] Features after post_attention_layers: {image_features.shape}, range=({image_features.min().item():.3f}, {image_features.max().item():.3f})")
         
         if return_raw_attention:
             return image_features, attn
