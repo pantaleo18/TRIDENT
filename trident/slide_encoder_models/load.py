@@ -149,34 +149,34 @@ class ABMILSlideEncoder(BaseSlideEncoder):
         assert pretrained is False, "ABMILSlideEncoder has no corresponding pretrained models. Please load with pretrained=False."
                                 
         pre_attention_layers = nn.Sequential(
-            nn.Linear(input_feature_dim, input_feature_dim),
-            nn.GELU(),
-            nn.Dropout(0.1)
+            nn.Linear(input_feature_dim, 512),
+            nn.ReLU(),
+            nn.Dropout(0.25)
         )
         
         image_pooler = ABMIL(
             n_heads=n_heads,
-            feature_dim=input_feature_dim,
+            feature_dim=512,
             head_dim=head_dim,
             dropout=dropout,
             n_branches=1,
             gated=gated
         )
         
-        post_attention_layers = nn.Sequential(
-            nn.Linear(input_feature_dim, input_feature_dim),
-            nn.GELU(),
-            nn.Dropout(0.1)
-        )
+        # post_attention_layers = nn.Sequential(
+        #     nn.Linear(input_feature_dim, input_feature_dim),
+        #     nn.GELU(),
+        #     nn.Dropout(0.1)
+        # )
         
         model = nn.ModuleDict({
             'pre_attention_layers': pre_attention_layers,
             'image_pooler': image_pooler,
-            'post_attention_layers': post_attention_layers
+            # 'post_attention_layers': post_attention_layers
         })
         
         precision = torch.float32
-        embedding_dim = input_feature_dim
+        embedding_dim = 512 # input_feature_dim
         return model, precision, embedding_dim
 
     def forward(self, batch, device='cuda', return_raw_attention=False):
@@ -195,7 +195,7 @@ class ABMILSlideEncoder(BaseSlideEncoder):
         image_features = rearrange(image_features, 'b 1 f -> b f')
         
         # Post-attention layers
-        image_features = self.model['post_attention_layers'](image_features)
+        # image_features = self.model['post_attention_layers'](image_features)
         
         if return_raw_attention:
             return image_features, attn
