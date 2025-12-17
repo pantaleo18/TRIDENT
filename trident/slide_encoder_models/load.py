@@ -202,6 +202,53 @@ class ABMILSlideEncoder(BaseSlideEncoder):
         return image_features
 
 
+    # #############DEBUGGING FORWARD####################################
+    # def forward(self, batch, device='cuda', return_raw_attention=False):
+    #     features = batch['features'].to(device)
+    #     mask = batch.get('mask', None)
+    #     if mask is not None:
+    #         mask = mask.to(device)
+        
+    #     # Pre-attention layers
+    #     image_features = self.model['pre_attention_layers'](features)
+        
+    #     # ABMIL pooling con maschera
+    #     image_features, attn = self.model['image_pooler'](image_features, attn_mask=mask)
+        
+    #     # Debugging sicuro dell'attenzione
+    #     if mask is not None:
+    #         print(f"[DEBUG] mask shape: {mask.shape}, attn shape: {attn.shape}")
+    #         for b in range(mask.shape[0]):
+    #             padded_positions = (mask[b] == 0).nonzero(as_tuple=True)[0]
+    #             if len(padded_positions) > 0:
+    #                 # Selezione sicura lungo l'ultima dimensione
+    #                 raw_attn_padded = attn[b, :, :, padded_positions].detach().cpu()
+    #                 print(f"[DEBUG] Batch {b}, num padded: {raw_attn_padded.shape[-1]}")
+    #                 print(f"[DEBUG] Raw attn nei padded: {raw_attn_padded}")
+    #                 print(f"[DEBUG] e^attn nei padded: {torch.exp(raw_attn_padded)}")
+
+    #                 # Controllo se maschera è rispettata
+    #                 if not torch.allclose(torch.exp(raw_attn_padded), torch.zeros_like(raw_attn_padded), atol=1e-8):
+    #                     raise ValueError(
+    #                         f"Masking non applicato correttamente nel batch {b}!\n"
+    #                         f"Attn raw nei padded: {raw_attn_padded}"
+    #                     )
+    #             else:
+    #                 print(f"[DEBUG] Batch {b}: nessun padded trovato, attn completa:")
+    #                 print(attn[b].detach().cpu())
+
+    #     # Rimuovo dimensione branch
+    #     image_features = rearrange(image_features, 'b 1 f -> b f')
+        
+    #     # Post-attention layers
+    #     image_features = self.model['post_attention_layers'](image_features)
+        
+    #     if return_raw_attention:
+    #         return image_features, attn
+    #     return image_features
+
+    # #############DEBUGGING FORWARD####################################
+
 class PRISMSlideEncoder(BaseSlideEncoder):
 
     def __init__(self, **build_kwargs):
