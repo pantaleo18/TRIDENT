@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 from einops import rearrange
 
-
 class ABMIL(nn.Module):
     """
     Multi-headed attention network with optional gating. Uses tanh-attention and sigmoid-gating as in ABMIL (https://arxiv.org/abs/1802.04712).

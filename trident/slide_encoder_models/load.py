@@ -5,6 +5,7 @@ import traceback
 from abc import abstractmethod
 from einops import rearrange
 from typing import Optional, Tuple, Dict, Any
+import torch.nn.functional as F
 
 from trident.IO import get_weights_path
 
@@ -53,7 +54,6 @@ slide_to_patch_encoder_name = {
     'madeleine': 'conch_v1',
     'feather': 'conch_v15'
 }
-
 
 
 class BaseSlideEncoder(torch.nn.Module):
@@ -123,6 +123,79 @@ class CustomSlideEncoder(BaseSlideEncoder):
         return None, None, None
 
 
+
+class im4MECSlideEncoder(BaseSlideEncoder):
+    
+    def __init__(self, **build_kwargs : Dict[str,Any]):
+        super().__init__(**build_kwargs)
+
+    def _build(
+        self,
+        input_feature_dim : int,
+        hidden_dim : int,
+        head_dim : int,
+        n_branches : int = 4,
+        dropout : float = 0.25,
+        pretrained: bool = False,
+        **kwargs,
+    ): 
+        self.enc_name = 'im4MEC'
+        import torch.nn as nn
+        from trident.slide_encoder_models.model_zoo.reusable_blocks.Attn_Net_Gated import Attn_Net_Gated
+        
+
+        # Fully Connected Layer
+        fc = nn.Sequential(
+            nn.Linear(input_feature_dim,hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+
+        # Projection
+        projection = Attn_Net_Gated(
+            hidden_dim=hidden_dim,
+            head_dim=head_dim,
+            dropout=dropout,
+            n_classes=n_branches,
+        )
+
+        model = nn.ModuleDict({
+            'filter' : fc,
+            'projection' : projection
+        })
+        
+        precision = torch.float32
+        embedding_dim = hidden_dim
+        return model, precision, embedding_dim
+    
+    def forward(self, batch , device='cuda',return_raw_attention = False):
+
+        X = batch['features'].to(device) # B x N x input_dim
+        
+        X_attn_mask = batch.get('mask',None)
+        
+        X_filtered = self.model['filter'](X) # B x N x hidden_dim
+
+        X_projected = self.model['projection'](X_filtered) # B x N x head_dim
+
+        X_projection_T = X_projected.permute(0, 2, 1)   # B x n_classes x N
+        
+        # X_attn_mask : B x N
+        if X_attn_mask is not None:
+            X_projection_T = X_projection_T.masked_fill(
+                ~X_attn_mask.to(device).unsqueeze(1), -1e9
+            )
+
+        attention_weights = F.softmax(X_projection_T, dim=-1) # B x n_classes x N
+
+        weighted_patches = torch.bmm(attention_weights, X_filtered)  #  B x n_classes x hidden_dim
+
+        if return_raw_attention:
+            return weighted_patches, attention_weights
+
+        return weighted_patches
+
+
 class ABMILSlideEncoder(BaseSlideEncoder):
 
     def __init__(self, **build_kwargs: Dict[str, Any]):
@@ -134,6 +207,7 @@ class ABMILSlideEncoder(BaseSlideEncoder):
     def _build(
         self,
         input_feature_dim: int,
+        features_dim : int,
         n_heads: int,
         head_dim: int,
         dropout: float,
@@ -147,36 +221,36 @@ class ABMILSlideEncoder(BaseSlideEncoder):
         self.enc_name = 'abmil'
         
         assert pretrained is False, "ABMILSlideEncoder has no corresponding pretrained models. Please load with pretrained=False."
-                                
+
         pre_attention_layers = nn.Sequential(
-            nn.Linear(input_feature_dim, 512),
-            nn.ReLU(),
-            nn.Dropout(0.25)
+            nn.Linear(input_feature_dim, features_dim),
+            nn.GELU(),
+            nn.Dropout(dropout)
         )
         
         image_pooler = ABMIL(
             n_heads=n_heads,
-            feature_dim=512,
+            feature_dim=features_dim,
             head_dim=head_dim,
             dropout=dropout,
             n_branches=1,
             gated=gated
         )
         
-        # post_attention_layers = nn.Sequential(
-        #     nn.Linear(input_feature_dim, input_feature_dim),
-        #     nn.GELU(),
-        #     nn.Dropout(0.1)
-        # )
+        post_attention_layers = nn.Sequential(
+            nn.Linear(features_dim, features_dim),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
         
         model = nn.ModuleDict({
             'pre_attention_layers': pre_attention_layers,
             'image_pooler': image_pooler,
-            # 'post_attention_layers': post_attention_layers
+            'post_attention_layers' : post_attention_layers
         })
         
         precision = torch.float32
-        embedding_dim = 512 # input_feature_dim
+        embedding_dim = features_dim
         return model, precision, embedding_dim
 
     def forward(self, batch, device='cuda', return_raw_attention=False):
@@ -195,7 +269,148 @@ class ABMILSlideEncoder(BaseSlideEncoder):
         image_features = rearrange(image_features, 'b 1 f -> b f')
         
         # Post-attention layers
-        # image_features = self.model['post_attention_layers'](image_features)
+        image_features = self.model['post_attention_layers'](image_features)
+        
+        if return_raw_attention:
+            return image_features, attn
+        return image_features
+
+class Fakeim4MECSlideEncoder(BaseSlideEncoder):
+
+    def __init__(self, **build_kwargs: Dict[str, Any]):
+        """
+        ABMIL initialization.
+        """
+        super().__init__(**build_kwargs)
+    
+    def _build(
+        self,
+        input_feature_dim: int,
+        features_dim : int,
+        n_heads: int,
+        head_dim: int,
+        dropout: float,
+        gated: bool,
+        pretrained: bool = False
+    ) -> Tuple[torch.nn.ModuleDict, torch.dtype, int]:
+        
+        from trident.slide_encoder_models.model_zoo.reusable_blocks.ABMIL import ABMIL
+        import torch.nn as nn
+
+        self.enc_name = 'im4MEC'
+        
+        assert pretrained is False, "im4MECSlideEncoder has no corresponding pretrained models. Please load with pretrained=False."
+
+        pre_attention_layers = nn.Sequential(
+            nn.Linear(input_feature_dim, features_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        
+        image_pooler = ABMIL(
+            feature_dim=features_dim,
+            head_dim=head_dim,
+            dropout=dropout,
+            n_heads=n_heads,
+            n_branches=1,
+            gated=gated
+        )
+        
+        model = nn.ModuleDict({
+            'pre_attention_layers': pre_attention_layers,
+            'image_pooler': image_pooler,
+        })
+        
+        precision = torch.float32
+        embedding_dim = features_dim
+        return model, precision, embedding_dim
+    
+    def forward(self, batch, device='cuda', return_raw_attention=False):
+        features = batch['features'].to(device)
+        mask = batch.get('mask', None)
+        if mask is not None:
+            mask = mask.to(device)
+        
+        # Pre-attention layers
+        image_features = self.model['pre_attention_layers'](features)
+        
+        # ABMIL pooling with attention mask
+        image_features, attn = self.model['image_pooler'](image_features, attn_mask=mask)
+        
+        # Remove branch dimension
+        image_features = rearrange(image_features, 'b 1 f -> b f')
+        
+        if return_raw_attention:
+            return image_features, attn
+        return image_features
+
+class myWaySlideEncoder(BaseSlideEncoder):
+
+    def __init__(self, **build_kwargs: Dict[str, Any]):
+        """
+        ABMIL initialization.
+        """
+        super().__init__(**build_kwargs)
+    
+    def _build(
+        self,
+        input_feature_dim: int,
+        signal_dim : int,
+        n_heads: int,
+        head_dim: int,
+        dropout: float,
+        gated: bool,
+        pretrained: bool = False
+    ) -> Tuple[torch.nn.ModuleDict, torch.dtype, int]:
+        
+        from trident.slide_encoder_models.model_zoo.reusable_blocks.ABMIL import ABMIL
+        from trident.slide_encoder_models.model_zoo.reusable_blocks.AttentionFilter import AttentionFilter
+        import torch.nn as nn
+
+        self.enc_name = 'myWay'
+        
+        assert pretrained is False, "myWaySlideEncoder has no corresponding pretrained models. Please load with pretrained=False."
+
+        noise_filter = AttentionFilter(
+            feature_dim=input_feature_dim,
+            hidden_dim=signal_dim,
+            dropout=dropout,
+            gated=False
+        )
+        
+        image_pooler = ABMIL(
+            n_heads=n_heads,
+            feature_dim=input_feature_dim,
+            head_dim=head_dim,
+            dropout=dropout,
+            n_branches=1,
+            gated=gated
+        )
+        
+        
+        model = nn.ModuleDict({
+            'noise_filter': noise_filter,
+            'image_pooler': image_pooler,
+        })
+        
+        precision = torch.float32
+        embedding_dim = input_feature_dim
+        return model, precision, embedding_dim
+
+    def forward(self, batch, device='cuda', return_raw_attention=False):
+        features = batch['features'].to(device)
+        mask = batch.get('mask', None)
+        if mask is not None:
+            mask = mask.to(device)
+        
+        # Noise Filter
+        image_features = self.model['noise_filter'](features, attn_mask = mask)
+        
+        # ABMIL pooling with attention mask
+        image_features, attn = self.model['image_pooler'](image_features, attn_mask=mask)
+        
+        # Remove branch dimension
+        image_features = rearrange(image_features, 'b 1 f -> b f')
         
         if return_raw_attention:
             return image_features, attn
@@ -291,7 +506,6 @@ class PRISMSlideEncoder(BaseSlideEncoder):
         z = z['image_embedding'] 
         return z
     
-
 class CHIEFSlideEncoder(BaseSlideEncoder):
 
     def __init__(self, **build_kwargs):
@@ -370,7 +584,6 @@ class CHIEFSlideEncoder(BaseSlideEncoder):
         z = z['WSI_feature']  # Shape (1,768)
         return z
     
-
 class GigaPathSlideEncoder(BaseSlideEncoder):
 
     def __init__(self, **build_kwargs):
@@ -518,7 +731,6 @@ class FeatherSlideEncoder(BaseSlideEncoder):
         z, _ = self.model.forward_features(batch['features'].to(device))
         return z
 
-
 class MeanSlideEncoder(BaseSlideEncoder):
 
     def __init__(self, **build_kwargs):
@@ -591,6 +803,8 @@ encoder_registry = {
     'madeleine': MadeleineSlideEncoder,
     'feather': FeatherSlideEncoder,
     'abmil': ABMILSlideEncoder,
+    'im4MEC' : im4MECSlideEncoder,
+    'myWay' : myWaySlideEncoder,
 
     # Mean encoders
     'mean-conch_v1': MeanSlideEncoder,
